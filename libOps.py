@@ -6,7 +6,7 @@ import parseOps
 import os
 import shutil
 import numpy as np
-import alignOps
+import sys
 import itertools
 import random
 
@@ -390,14 +390,13 @@ class libObj:
         mystrlen = len(mystr)
         trunc_len = int(mystrlen)
         if('-amplicon_terminate' in self.mySettings):
-            len_search_term = self.mySettings['-amplicon_terminate'][0]
-            term_seq_dict = self.mySettings['-amplicon_terminate'][1]
+            len_search_term = int(self.mySettings['-amplicon_terminate'][0])
             for i in range(mystrlen-len_search_term+1):
-                if mystr[i:(i+len_search_term)] in term_seq_dict: #search dictionary object
+                if mystr[i:(i+len_search_term)] in self.mySettings['-amplicon_terminate'][1]: #search dictionary object
                     trunc_len = int(i)
                     break #found earliest occurring string in termination dictionary
             
-        return mystr[:trunc_len]
+        return str(mystr[:trunc_len])
         
     def get_min_allowed_readlens(self,filter_amplicon_window):
         
@@ -474,33 +473,35 @@ class libObj:
               
         sysOps.throw_status("Loading forward fastq file/s " + self.for_fastqsource + ", printing discarded sequences to for_" + discarded_sequence_path)
         
-        for_handles = list()
+        for_source_filenames = list()
+
         if ',' in self.for_fastqsource: #more than 1 fastq source file to read from
             for this_fastqsource in self.for_fastqsource.split(','):
                 if this_fastqsource.startswith('.'):
-                    for_handles.append(open(sysOps.globaldatapath +this_fastqsource, "rU"))
+                    for_source_filenames.append(sysOps.globaldatapath +this_fastqsource)
                 else:
-                    for_handles.append(open(this_fastqsource, "rU"))
+                    for_source_filenames.append(str(this_fastqsource))
         else:
             if self.for_fastqsource.startswith('.'):
-                for_handles.append(open(sysOps.globaldatapath +self.for_fastqsource, "rU"))
+                for_source_filenames.append(sysOps.globaldatapath +self.for_fastqsource)
             else:
-                for_handles.append(open(self.for_fastqsource, "rU"))
+                for_source_filenames.append(str(self.for_fastqsource))
             
         sysOps.throw_status("Loading reverse fastq file/s " + self.rev_fastqsource + ", printing discarded sequences to rev_" + discarded_sequence_path)
         
-        rev_handles = list()
-        if ',' in self.rev_fastqsource:
+        rev_source_filenames = list()
+
+        if ',' in self.rev_fastqsource: #more than 1 fastq source file to read from
             for this_fastqsource in self.rev_fastqsource.split(','):
                 if this_fastqsource.startswith('.'):
-                    rev_handles.append(open(sysOps.globaldatapath +this_fastqsource, "rU"))
+                    rev_source_filenames.append(sysOps.globaldatapath +this_fastqsource)
                 else:
-                    rev_handles.append(open(this_fastqsource, "rU"))
+                    rev_source_filenames.append(str(this_fastqsource))
         else:
             if self.rev_fastqsource.startswith('.'):
-                rev_handles.append(open(sysOps.globaldatapath +self.rev_fastqsource, "rU"))
+                rev_source_filenames.append(sysOps.globaldatapath +self.rev_fastqsource)
             else:
-                rev_handles.append(open(self.rev_fastqsource, "rU"))
+                rev_source_filenames.append(str(self.rev_fastqsource))
                     
         for_uxi_filehandles = list()
         rev_uxi_filehandles = list()
@@ -604,13 +605,25 @@ class libObj:
         # seqform_*_params are lists of lists of seqforms (outer indices are frame-sequence index, inner indices are amplicon index)
         for_seq_buff = np.zeros(4*for_read_len,dtype=np.bool_)
         rev_seq_buff = np.zeros(4*rev_read_len,dtype=np.bool_)
-        for_chararray = np.chararray((for_read_len))
-        rev_chararray = np.chararray((rev_read_len))
+        for_list_buff = ['' for i in range(for_read_len)]
+        rev_list_buff = ['' for i in range(rev_read_len)]
         for_qual_buff = np.zeros(for_read_len,dtype=np.int32)
         rev_qual_buff = np.zeros(rev_read_len,dtype=np.int32)
+        for_record = None
+        rev_record = None
         
-        for for_handle,rev_handle in itertools.izip(for_handles,rev_handles): #loop through list of file handles
-            for for_record,rev_record in itertools.izip(SeqIO.parse(for_handle, "fastq"),SeqIO.parse(rev_handle, "fastq")):
+        for for_source_filename,rev_source_filename in zip(for_source_filenames,rev_source_filenames): #loop through list of file handles
+            for_handle = SeqIO.parse(open(for_source_filename),"fastq")
+            rev_handle = SeqIO.parse(open(rev_source_filename),"fastq")
+            
+            count = 0
+            while True:
+                try:
+                    for_record = next(for_handle)
+                    rev_record = next(rev_handle)
+                    count += 1
+                except StopIteration:
+                    break # break condition for end of either forward or reverse read file
                 
                 if for_read_len > len(for_record.seq) or rev_read_len > len(rev_record.seq):
                     self.lenrequirement_discarded_reads += 1
@@ -618,11 +631,12 @@ class libObj:
                     #Truncate record lengths according to first entry. Fastq entries may therefore go up in length, but they cannot go down
                     for_seq_buff[:] = np.False_
                     rev_seq_buff[:] = np.False_
-                    parseOps.seq_to_np(for_record.seq,for_seq_buff,for_chararray,for_read_len)
-                    parseOps.seq_to_np(rev_record.seq,rev_seq_buff,rev_chararray,rev_read_len)
+                    
+                    parseOps.seq_to_np(for_record.seq,for_seq_buff,for_read_len)
+                    parseOps.seq_to_np(rev_record.seq,rev_seq_buff,rev_read_len)
                     for_qual_buff[:] = for_record.letter_annotations['phred_quality'][:for_read_len]
                     rev_qual_buff[:] = rev_record.letter_annotations['phred_quality'][:rev_read_len]
-                    
+
                     for_params_index = None
                     rev_params_index = None
                     
@@ -641,15 +655,15 @@ class libObj:
                             if pass_filter_for:
                                 for_params_index = int(seqform_index)
                                 break
-    
+                        
                         pass_filter_rev = False
                         some_pass_filter_rev = False # kept in memory in case an amplicon variant requires looking for other rev seqforms
                         pass_filter_rev_amp = False  
                         all_sub_amplicons_pass = False 
                         rev_amp_binary = None
                         curr_rev_amp_binary = None
+
                         if pass_filter_for:
-                            
                             for seqform_index in range(num_seqform_rev):
                                 all_sub_amplicons_pass = False
                                 for amplicon_index in range(len(self.seqform_rev_params[seqform_index])):
@@ -659,6 +673,8 @@ class libObj:
                                                                           self.max_mismatch_template)
                                     some_pass_filter_rev = some_pass_filter_rev or pass_filter_rev # flag that at least one sequence form succeeded
                                     all_sub_amplicons_pass = False
+                                    
+                                    
                                     if pass_filter_rev:
                                         rev_params_index = int(seqform_index)
                                         all_sub_amplicons_pass = True
@@ -673,8 +689,8 @@ class libObj:
                                                 # not breaking out of loop at this stage, since un-recognized amplicons will continue 
                                                 # to have information stored in curr_rev_amp_binary for "invalid" amplicon output
                                             else:
-                                                tot_rev_amp_bases += curr_rev_amp_binary.shape[0]/4
-                                            
+                                                tot_rev_amp_bases += np.sum(curr_rev_amp_binary) # edit 2/2019, again 7/12/19
+                                        
                                     if all_sub_amplicons_pass:
                                         rev_amp_binary = curr_rev_amp_binary
                                         match_amplicon_index = int(amplicon_index)
@@ -682,35 +698,39 @@ class libObj:
                                     
                                 if all_sub_amplicons_pass: # note: it must be insufficient to break out of trying other seqform_rev options if the amplicon filter has not been passed
                                     break
-                                                
+                                              
                         if pass_filter_for and pass_filter_rev and all_sub_amplicons_pass: # passed all tests
+                            
                             if not (rev_amp_filehandle is None):
-                                mystr = rev_chararray[rev_amp_binary].tostring()
+                                mystr = parseOps.np_to_seq(rev_seq_buff,rev_amp_binary,rev_list_buff) # Edit 7/14/19 str()
+                                
                                 if len(rev_record.seq) > rev_read_len:
-                                    mystr = mystr + str(rev_record.seq)[rev_read_len:]
+                                    mystr = str(mystr + str(rev_record.seq)[rev_read_len:])
                                     tot_rev_amp_bases += (len(rev_record.seq) - rev_read_len)
+
                                 # will truncate final sub-amplicon-sequence
                                 if '-amplicon_terminate' in self.mySettings:
                                     old_len = len(mystr)
-                                    mystr = self.truncate_amplicon(mystr)
+                                    mystr = self.truncate_amplicon(mystr)  # Edit 7/14/19 str(return)
                                     change_in_len = len(mystr)-old_len
                                     if tot_rev_amp_bases + change_in_len < self.filter_amplicon_window:
                                         all_sub_amplicons_pass = False
-                        
+
                                 if all_sub_amplicons_pass: # re-check this after the above conditional
                                     rev_amp_filehandle.write('>' + rev_record.id + '\n')
                                     rev_amp_filehandle.write(mystr + '\n')
                                     rev_amp_baseTally.add_record(mystr,1,6) #record base-statistics for only first 6 bases of gene
-                            
+
                             if all_sub_amplicons_pass: # re-check this after the above conditional
                                 self.num_retained += 1
                                 for for_uxi_binary,for_uxi_handle,for_uxi_baseTally in itertools.izip(for_uxi_binary_list[for_params_index][0],for_uxi_filehandles,for_uxi_baseTally_list):
                                     for_uxi_handle.write('>' + for_record.id + '\n')
-                                    for_uxi_handle.write(for_chararray[for_uxi_binary].tostring() + '\n')
-                                    for_uxi_baseTally.add_record(for_chararray[for_uxi_binary],1)
+                                    mystr = parseOps.np_to_seq(for_seq_buff,for_uxi_binary,for_list_buff)
+                                    for_uxi_handle.write(mystr + '\n')
+                                    for_uxi_baseTally.add_record(mystr,1)
                                 for rev_uxi_binary,rev_uxi_handle,rev_uxi_baseTally in itertools.izip(rev_uxi_binary_list[rev_params_index][match_amplicon_index],rev_uxi_filehandles,rev_uxi_baseTally_list):
-                                    mystr = rev_chararray[rev_uxi_binary].tostring()
                                     rev_uxi_handle.write('>' + rev_record.id + '\n')
+                                    mystr = parseOps.np_to_seq(rev_seq_buff,rev_uxi_binary,rev_list_buff)
                                     rev_uxi_handle.write(mystr + '\n')
                                     rev_uxi_baseTally.add_record(mystr,1)
                                     
@@ -719,24 +739,26 @@ class libObj:
                                 #print index of forward/reverse auxiliary-assignments that match current read
                                 for_auxassign_handle.write(str(for_params_index) + '\n') 
                                 rev_auxassign_handle.write(str(rev_params_index) + '\n')
-                        
-                        if not all_sub_amplicons_pass:     
+                            
+                        if not all_sub_amplicons_pass:
                             if pass_filter_for and some_pass_filter_rev: # amplicon is a problem, but everything else makes sense
                                 self.num_amplicon_invalid += 1
-                                mystr = rev_chararray[curr_rev_amp_binary].tostring()
+                                mystr = parseOps.np_to_seq(rev_seq_buff,curr_rev_amp_binary, rev_list_buff)
                                 rev_amp_invalid_fastq.write('>' + rev_record.id + '\n')
                                 if len(rev_record.seq) > rev_read_len:
                                     rev_amp_invalid_fastq.write(mystr + str(rev_record.seq)[rev_read_len:] + '\n')
                                 else:
                                     rev_amp_invalid_fastq.write(mystr + '\n')
                                 for for_uxi_binary,for_uxi_handle in itertools.izip(for_uxi_binary_list[for_params_index][0],for_uxi_amp_invalid_filehandles):
-                                    mystr = for_chararray[for_uxi_binary].tostring()
+                                    mystr = parseOps.np_to_seq(for_seq_buff, for_uxi_binary, for_list_buff)
                                     for_uxi_handle.write('>' + for_record.id + '\n')
                                     for_uxi_handle.write(mystr + '\n')
+                                    
                                 for rev_uxi_binary,rev_uxi_handle in itertools.izip(rev_uxi_binary_list[rev_params_index][0],rev_uxi_amp_invalid_filehandles):
-                                    mystr = rev_chararray[rev_uxi_binary].tostring()
+                                    mystr = parseOps.np_to_seq(rev_seq_buff,rev_uxi_binary, rev_list_buff)
                                     rev_uxi_handle.write('>' + rev_record.id + '\n')
                                     rev_uxi_handle.write(mystr + '\n')
+                                    
                             else:
                                 for_discarded_fasta.write('>' + for_record.id + '\n')
                                 for_discarded_fasta.write(str(for_record.seq) + '\n')
@@ -745,11 +767,18 @@ class libObj:
                                 self.num_discarded += 1
                     else:
                         num_discarded_qscore += 1
-                        #sysOps.throw_exception('Q-Discarded. ' + str(num_discarded_qscore) + '/' + str(self.num_discarded+self.num_retained+self.num_amplicon_invalid) + ', mean = ' + str(sum(for_record.letter_annotations['phred_quality'])/float(len(for_record.seq))) + ',' + str(sum(rev_record.letter_annotations['phred_quality'])/float(len(rev_record.seq))))
-            
+                        
                 if (self.num_discarded+self.num_retained+self.num_amplicon_invalid+num_discarded_qscore)%100000 == 0:
-                    sysOps.throw_status('Analyzed ' + str(self.num_discarded+self.num_retained+self.num_amplicon_invalid+num_discarded_qscore) + ' reads. Discarded ' + str(self.num_discarded) + ', retained ' + str(self.num_retained) + ' reads, discarded ' + str(self.lenrequirement_discarded_reads) + ' invalid-length reads, set aside ' + str(self.num_amplicon_invalid) + " invalid-amplicon reads.")
-                
+                    sysOps.throw_status('Analyzed ' + str(self.num_discarded+self.num_retained+self.num_amplicon_invalid+num_discarded_qscore) + ' reads. Discarded ' 
+                                        + str(self.num_discarded) + ', retained ' 
+                                        + str(self.num_retained) + ' reads, discarded ' 
+                                        + str(num_discarded_qscore) + ' low q-score, set aside ' 
+                                        + str(self.num_amplicon_invalid) + " invalid-amplicon reads.")
+            
+            
+            for_handle.close()
+            rev_handle.close()
+                    
         sysOps.throw_status('Analyzed ' + str(self.num_discarded+self.num_retained+self.num_amplicon_invalid+num_discarded_qscore) + ' reads. Discarded ' + str(self.num_discarded) + ', retained ' + str(self.num_retained) + ' reads, discarded ' + str(self.lenrequirement_discarded_reads) + ' invalid-length reads, set aside ' + str(self.num_amplicon_invalid) + " invalid-amplicon reads.")
         sysOps.throw_status('Discarded ' + str(num_discarded_qscore) + ' due to quality scores.')
         for this_handle in for_uxi_filehandles:
@@ -763,10 +792,6 @@ class libObj:
         
         if not (rev_amp_filehandle is None):
             rev_amp_filehandle.close()
-            
-        for for_handle,rev_handle in itertools.izip(for_handles,rev_handles):
-            for_handle.close()
-            rev_handle.close()
         
         for_discarded_fasta.close()
         rev_discarded_fasta.close()

@@ -15,14 +15,28 @@ def ambig_seq_to_np(seq,seq_bool_vec,capital_bool_vec,ambiguous_vec):
             capital_bool_vec[(i*4)+j] = seq[i].isupper()
         ambiguous_vec[i] = (seq[i].upper() not in base_order) # True if ambiguous base
 
-def seq_to_np(seq,buffer_vec,buffer_chararray,mylen):
+def seq_to_np(seq,buffer_vec,mylen):
     # assumes seq is upper-case with length mylen
     base_order = 'ACGT'
     buffer_vec[:] = np.False_
     for i in range(mylen):
-        buffer_chararray[i] = seq[i]
         if seq[i] in base_order:
             buffer_vec[(i*4)+base_order.index(seq[i])] = np.True_
+            
+def np_to_seq(buffer_vec,binary_vec,list_buff):
+    
+    str_end = 0
+    base_order = 'ACGT'
+    base_indices = np.arange(4)
+    for i in np.where(binary_vec)[0]:
+        base_index = base_indices[buffer_vec[(i*4):((i+1)*4)]]
+        if base_index.shape[0] == 1:
+            list_buff[str_end] = base_order[base_index[0]]
+        else:
+            list_buff[str_end] = 'N'
+        str_end += 1
+
+    return ''.join(list_buff[:str_end])
 
 def parse_seqform(parseable,amplicon_option = None):
     '''
